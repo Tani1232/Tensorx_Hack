@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Video & Audio Transcription MVP</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f7f9fc;
+            color: #333;
+        }
+        h1 {
+            margin-bottom: 5px;
+        }
+        p.subtitle {
+            color: #666;
+            margin-bottom: 25px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 800px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+        video {
+            width: 100%;
+            max-width: 600px;
+            background-color: #000;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #startBtn:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        #stopBtn {
+            background-color: #F44336;
+            color: white;
+        }
+        #stopBtn:hover:not(:disabled) {
+            background-color: #da190b;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        .transcription-box {
+            margin-top: 25px;
+            width: 100%;
+            max-width: 600px;
+            padding: 20px;
+            background-color: #f1f3f5;
+            border-radius: 8px;
+            min-height: 120px;
+            border: 1px solid #e0e0e0;
+        }
+        .transcription-box h3 {
+            margin-top: 0;
+            color: #444;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #ccc;
+        }
+        .indicator.active {
+            background-color: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+            100% { transform: scale(0.95); opacity: 1; }
+        }
+        #transcriptText {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            font-size: 1.1em;
+            color: #222;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Live Speech Transcription MVP</h1>
+    <p class="subtitle">Stream your webcam and microphone to a FastAPI backend + Whisper AI.</p>
+
+    <div class="container">
+        <!-- Live Video Element -->
+        <video id="videoElement" autoplay muted playsinline></video>
+        
+        <div class="controls">
+            <button id="startBtn">Start Streaming</button>
+            <button id="stopBtn" disabled>Stop Streaming</button>
+        </div>
+
+        <div class="transcription-box">
+            <h3><span id="recordingIndicator" class="indicator"></span> Live Transcription</h3>
+            <div id="transcriptText">Waiting to start...</div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoElement');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const transcriptText = document.getElementById('transcriptText');
+        const indicator = document.getElementById('recordingIndicator');
+
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let ws = null;
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                // Request webcam and microphone
+                mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                video.srcObject = mediaStream;
+
+                // Establish WebSocket Connection
+                ws = new WebSocket('ws://localhost:8000/ws/audio');
+                
+                ws.onopen = () => {
+                    console.log('Connected to backend WebSocket.');
+                    transcriptText.innerText = 'Connected. Listening...';
+                    indicator.classList.add('active');
+                    
+                    startRecording();
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.text) {
+                        // We replace the text because the backend sends back the cumulative transcript
+                        transcriptText.innerText = data.text;
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket connection closed.');
+                    stopStreaming();
+                };
+
+                ws.onerror = (error) => {
+                    console.error("WebSocket error:", error);
+                    alert("WebSocket encountered an error. Is the backend running?");
+                    stopStreaming();
+                };
+
+            } catch (err) {
+                console.error("Error accessing media devices.", err);
+                alert("Could not access camera/microphone. Please check permissions.");
+            }
+        });
+
+        stopBtn.addEventListener('click', () => stopStreaming());
+
+        function stopStreaming() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+            video.srcObject = null;
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            indicator.classList.remove('active');
+            
+            if (transcriptText.innerText === 'Connected. Listening...') {
+                transcriptText.innerText = 'Waiting to start...';
+            }
+        }
+
+        function startRecording() {
+            // Use an audio mime type valid for Chrome (WebM Opus)
+            const options = { mimeType: 'audio/webm;codecs=opus' };
+            try {
+                mediaRecorder = new MediaRecorder(mediaStream, options);
+            } catch (e) {
+                console.warn('Opus not supported, falling back to default.');
+                mediaRecorder = new MediaRecorder(mediaStream);
+            }
+
+            // Start sending data chunks every 1 second
+            mediaRecorder.start(1000);
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                    // Send binary Audio blob to the WebSocket
+                    ws.send(event.data);
+                }
+            };
+        }
+    </script>
+</body>
+</html>
