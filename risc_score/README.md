@@ -1,197 +1,130 @@
-# Risk Scoring Engine — Video-Based Loan Origination System
+# Risk Scoring Engine — Advanced Loan Origination System (v2)
 
-A **production-grade, modular risk scoring engine** that ingests bureau data,
-STT-derived inputs, fraud signals, and policy rules to produce an explainable
-`0–1000` risk score, risk band, decision, and natural-language explanation.
+A **production-grade, explainable risk scoring and loan eligibility engine**. This system ingests credit bureau data, identity signals, IP geolocation, and collateral assets to produce a comprehensive risk assessment.
+
+It calculates a `0–1000` risk score, determines a risk band/decision, and computes the **Maximum Eligible Loan Amount** through two parallel engines.
 
 ---
 
-## Project Structure
+## 🛠️ Project Architecture
 
 ```
 risc_score/
-├── config.py              # All thresholds, weights, MongoDB settings
-├── models.py              # Pydantic input/output schemas
-├── feature_engineering.py # EMI calc, FOIR, normalisation (0–1000)
-├── rules_engine.py        # Hard-decline policy checks
-├── risk_engine.py         # Core orchestrator pipeline
+├── eligibility_engine.py  # NEW: Income-based headroom + Collateral LTV caps
+├── config.py              # Central registry: thresholds, weights, policy rules
+├── models.py              # Pydantic schemas: 10-feature input, complex output
+├── feature_engineering.py # Normalisation (0–1000), EMI math, signal processing
+├── rules_engine.py        # Hard-decline policy gates (Policy Overrides)
+├── risk_engine.py         # Orchestrator: Weighted Scoring + Fraud Signal aggregation
 ├── database.py            # MongoDB audit persistence layer
-├── utils.py               # EMI formula, scalers, NL explanation gen
-├── main.py                # CLI runner with 6 built-in test cases
-└── requirements.txt
+├── utils.py               # Financial formulas, scalers, NL explanation engine
+└── main.py                # CLI runner with 10 comprehensive test scenarios
 ```
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### 1. Install dependencies
+### 1. Environment Setup
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run all test cases
+### 2. Run Comprehensive Suite
+Executes 10 curated test cases covering prime applicants, defaults, fraud, and secured loans.
 ```bash
 python main.py
 ```
 
-### 3. Run with MongoDB persistence
+### 3. Advanced Execution
 ```bash
-# Requires MongoDB running on localhost:27017
-python main.py --save-db
-```
-
-### 4. Raw JSON output (for downstream integration)
-```bash
-python main.py --json-only
+python main.py --save-db    # Persist results to MongoDB (localhost:27017)
+python main.py --json-only  # Output raw JSON for API integration
 ```
 
 ---
 
-## Scoring Architecture
+## 🧠 Scoring & Eligibility Architecture
 
-### Pipeline (per application)
-```
-Input JSON
-    │
-    ▼
-[1] Pydantic Validation       ← models.py
-    │
-    ▼
-[2] Feature Engineering       ← feature_engineering.py
-    │  · Compute proposed EMI (reducing balance formula)
-    │  · Derive FOIR
-    │  · Normalise 7 features → 0–1000 each
-    │
-    ▼
-[3] Hard-Decline Rules        ← rules_engine.py
-    │  · FOIR > 65%  → DECLINE
-    │  · NPA present → DECLINE
-    │  · CIBIL < 650 → DECLINE
-    │  · DPD 90+ ≥ 3 → DECLINE
-    │  · Income match < 70% → DECLINE
-    │
-    ▼
-[4] Weighted Risk Score       ← risk_engine.py
-    │
-    ▼
-[5] Risk Band + Decision
-    │
-    ▼
-[6] Fraud Flag Detection
-    │
-    ▼
-[7] Reason Code Generation
-    │
-    ▼
-[8] NL Explanation
-    │
-    ▼
-[9] MongoDB Audit Persist     ← database.py
-    │
-    ▼
-Output JSON
+### Pipeline Workflow
+```mermaid
+graph TD
+    A[Input JSON] --> B(Pydantic Validation)
+    B --> C[Feature Engineering]
+    C --> D{Hard-Decline Gates}
+    D -- Pass --> E[Eligibility Engine]
+    D -- Fail --> Z[Instant Decline]
+    E --> F[Weighted Risk Score]
+    F --> G[Secured Boost Multiplier]
+    G --> H[Final Decision Logic]
+    H --> I[Reasoning & NL Explanation]
+    I --> J[MongoDB Audit Record]
+    J --> K[Output JSON]
 ```
 
-### Scoring Weights
+### Scoring Logic (10 Features)
 
-| Feature              | Weight |
-|----------------------|--------|
-| CIBIL Score          | 25%    |
-| FOIR                 | 20%    |
-| DPD 90+              | 15%    |
-| Credit Utilisation   | 10%    |
-| Enquiry Count (6M)   | 10%    |
-| Employment Tenure    | 10%    |
-| Income Verification  | 10%    |
-
-### Risk Bands
-
-| Score     | Band      | Decision        |
-|-----------|-----------|-----------------|
-| 700–1000  | LOW       | APPROVE         |
-| 550–699   | MEDIUM    | REDUCE (offer)  |
-| 400–549   | HIGH      | REVIEW (manual) |
-| < 400     | VERY_HIGH | DECLINE         |
+| Pillar | Feature | Weight | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Credit** | CIBIL Score | 23% | Overall creditworthiness history |
+| **Capacity**| FOIR | 18% | Existing obligations vs. Income |
+| **Behavior**| DPD 90+ | 14% | Serious delinquency history |
+| **Discipline**| Credit Utilisation | 9% | Dependence on revolving credit |
+| **Intent** | Enquiry Count (6M) | 9% | Credit hunger / desperate borrowing |
+| **Stability**| Employment Tenure | 9% | Continuity of income flow |
+| **Trust** | Income Verification | 9% | Verification of stated income accuracy |
+| **Lifecycle**| Age Band | 4% | Risk proxy (Prime vs. Young vs. Senior) |
+| **Fraud** | IP Location Match | 3% | Geolocation vs. KYC address consistency |
+| **Asset** | Collateral LTV | 2% | Asset cushion for secured loans |
 
 ---
 
-## Sample Output
+## 🚦 Policy Gates (Hard-Decline)
 
-```json
-{
-  "risk_score": 859,
-  "risk_band": "LOW",
-  "decision": "APPROVE",
-  "foir": 0.1483,
-  "flags": ["NONE"],
-  "reason_codes": [
-    "GOOD_CIBIL",
-    "LOW_FOIR",
-    "NO_DPD",
-    "LOW_CREDIT_UTILIZATION",
-    "STABLE_EMPLOYMENT",
-    "INCOME_VERIFIED",
-    "LOW_ENQUIRIES",
-    "LONG_CREDIT_HISTORY"
-  ],
-  "top_factors": ["cibil", "foir", "dpd"],
-  "llm_explanation": "This applicant presents a low risk profile. The applicant
-    demonstrates strong credit score, manageable debt obligations, clean repayment
-    history... Based on the scoring analysis, we recommend full loan approval."
-}
-```
+Any applicant triggering these rules is **instantly declined**, bypassing the scoring model:
+- 🎂 **Age**: Under 18 or Over 70
+- 🕵️ **Fraud**: VPN/Proxy/TOR detection
+- 🗺️ **Location**: IP Country mismatch (International IPs)
+- 💳 **Credit**: CIBIL < 650, DPD 90+ ≥ 3, or NPA present
+- 💰 **Financial**: FOIR > 65% or Income match < 70%
+- 🏠 **Collateral**: LTV breach (e.g., > 75% for Property)
 
 ---
 
-## Test Case Summary (Built-in Scenarios)
+## 💸 Loan Eligibility & Counter-Offers
 
-| # | Scenario                         | Score | Decision |
-|---|----------------------------------|-------|----------|
-| 1 | Ideal Applicant                  | 859   | APPROVE  |
-| 2 | Spec Sample (Moderate FOIR)      | 665   | REDUCE   |
-| 3 | High FOIR                        | 0     | DECLINE  |
-| 4 | NPA Present                      | 0     | DECLINE  |
-| 5 | Fraud Signals + Borderline Score | 563   | REDUCE * |
-| 6 | Young Applicant Low History      | 619   | REDUCE   |
+The system generates a **Maximum Eligible Amount** based on:
+1. **Income Eligibility**: Affordable EMI headroom based on a target 50% FOIR.
+2. **Collateral Eligibility**: Capped by LTV limits (e.g., 90% for FD, 75% for Gold/Property).
 
-> \* Fraud flags active: `FRAUD_GEO_MISMATCH`, `FRAUD_MULTIPLE_APPLICATIONS`, `FRAUD_HIGH_ENQUIRY_COUNT`
+> [!TIP]
+> **Counter-Offers**: If `requested_amount > final_max_eligible`, the engine overrides the decision to **REDUCE** and suggests a specific counter-offer amount.
 
 ---
 
-## MongoDB Schema
+## 📊 Test Case Summary (V2 Suite)
 
-Audit records are stored in `risk_scoring_db.loan_applications`:
-
-```json
-{
-  "application_id": "APP-20260415191828-1FB5EB3D",
-  "timestamp": "2026-04-15T19:18:28+00:00",
-  "input_data": { ... },
-  "computed_features": { ... },
-  "hard_decline_result": { ... },
-  "output": { ... }
-}
-```
-
-Indexes: `application_id` (unique), `timestamp`.
-
----
-
-## Extending the Engine
-
-| Task                          | File to modify          |
-|-------------------------------|-------------------------|
-| Add a new hard-decline rule   | `rules_engine.py`       |
-| Adjust score weights          | `config.py`             |
-| Plug in a real bureau API     | `risk_engine.py` step 1 |
-| Add a new feature/normaliser  | `feature_engineering.py`|
-| Tune risk band thresholds     | `config.py`             |
-| Add new reason codes          | `config.py` + `risk_engine.py` |
+| # | Scenario | Decision | Key Signal |
+| :--- | :--- | :--- | :--- |
+| 1 | **Ideal Applicant** | **APPROVE** | Score 850+, Clean record |
+| 2 | **Moderate FOIR** | **APPROVE** | FOIR penalty curved, score improved |
+| 3 | **High FOIR** | **DECLINE** | Threshold breach (> 65%) |
+| 5 | **Fraud Signals** | **REVIEW** | Multi-fraud flag review trigger |
+| 6 | **Young Thin File** | **REVIEW** | Age-based soft-override |
+| 7 | **Secured Loan** | **APPROVE** | Property collateral (8% boost) |
+| 8 | **VPN Detected** | **DECLINE** | Fraud gate activated |
+| 9 | **Overseas IP** | **REVIEW** | Country mismatch |
+| 10 | **Low Income** | **DECLINE** | Requested amount >> eligible |
+| 11 | **No Bureau History** | **REVIEW** | RBI thin-file rules applied |
+| 12 | **Settled Accounts** | **REDUCE** | 15% discount applied + downgrade |
+| 13 | **KYC Age Mismatch** | **REVIEW** | Vision ID mismatch flag |
 
 ---
 
-## Dependencies
+## ⚙️ Configuration & Tuning
 
-- **pydantic ≥ 2.0** — input validation and schema enforcement  
-- **pymongo ≥ 4.6**  — MongoDB audit persistence (optional; degrades gracefully)
+Modify `config.py` to:
+- **Rebalance Weights**: Adjust the 10-feature `SCORE_WEIGHTS` dictionary.
+- **Tune LTV**: Update `COLLATERAL_LTV_MAP` for different asset classes.
+- **Policy Shift**: Change `HARD_DECLINE` thresholds for FOIR or CIBIL.
+- **Age Bands**: Refine `AGE_BAND_SCORES` to target specific demographics.
