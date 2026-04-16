@@ -4,7 +4,8 @@ import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import whisper
-
+from google import genai
+from google.genai import types
 app = FastAPI()
 
 # We will lazy-load the model to prevent uvicorn from hanging on startup
@@ -42,6 +43,25 @@ async def audio_websocket(websocket: WebSocket):
     await websocket.accept()
     print("New WebSocket connection established.")
     
+    # Initialize Gemini
+    gemini_client = None
+    system_instruction = (
+        "You are a bank loan interviewer. Your goal is to assess the borrower's eligibility "
+        "for a loan by asking relevant questions about their financial history, income, purpose "
+        "of the loan, and repayment plan. Be professional, polite, and thorough. The user's input "
+        "is a continuous live transcript of their speech."
+    )
+
+    llm_api_key = "AIzaSyBQrF61wV32rpPsGOMyXYGARnvxDNKIcbA"
+    if llm_api_key:
+        try:
+            gemini_client = genai.Client(api_key=llm_api_key)
+            print("Gemini client initialized successfully.")
+        except Exception as e:
+            print(f"Error initializing Gemini: {e}")
+    else:
+        print("Warning: API Key not set. LLM responses will be disabled.")
+    
     # Let frontend know we're initializing the model on first connect
     await websocket.send_json({"text": "Initializing AI Model... Give it a moment."})
     local_model = await get_model()
@@ -51,6 +71,9 @@ async def audio_websocket(websocket: WebSocket):
     # Because MediaRecorder sends WebM Opus chunks, the header is only present 
     # in the very first incoming chunk. Concatenating them reconstructs a valid WebM file.
     audio_buffer = bytearray()
+    
+    last_llm_prompt = ""
+    last_llm_response = ""
     
     try:
         while True:
@@ -70,8 +93,31 @@ async def audio_websocket(websocket: WebSocket):
                 
                 if transcript_text:
                     print(f"[TRANSCRIBED]: {transcript_text}")
+                    
+                    # Trigger LLM if we have enough new text ending in punctuation
+                    if gemini_client and transcript_text != last_llm_prompt and transcript_text[-1] in ".?!":
+                        try:
+                            # Ask Gemini async
+                            response = await gemini_client.aio.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=transcript_text,
+                                config=types.GenerateContentConfig(
+                                    system_instruction=system_instruction,
+                                )
+                            )
+                            if response and response.text:
+                                last_llm_response = response.text
+                                last_llm_prompt = transcript_text
+                                print(f"[LLM RESPONDED]: {last_llm_response[:50]}...")
+                        except Exception as e:
+                            print(f"LLM Error: {e}")
+                    
                     # Send accumulated transcript back to frontend to display
-                    await websocket.send_json({"text": transcript_text})
+                    display_text = f"User: {transcript_text}"
+                    if last_llm_response:
+                        display_text += f"\n\nInterviewer: {last_llm_response}"
+                        
+                    await websocket.send_json({"text": display_text})
                     
             except Exception as e:
                 print(f"Transcription Execution Error: {e}")
