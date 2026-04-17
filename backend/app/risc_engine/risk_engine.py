@@ -16,14 +16,12 @@ from .models import (
     HardDeclineResult,
     RiskScoreOutput,
     EligibilityResult,
-    AuditRecord,
     RiskBand,
     Decision,
     CollateralType,
 )
 from .feature_engineering import engineer_features
 from .rules_engine import evaluate_hard_rules, evaluate_soft_rules
-from .database import save_audit_record
 from .config import (
     SCORE_WEIGHTS,
     RISK_BAND_LOW_MIN,
@@ -47,6 +45,10 @@ from .utils import (
     logger,
     clamp,
 )
+
+
+# In-memory audit log (last 50 scores — no external DB needed)
+_audit_log: list = []
 
 
 # ──────────────────────────────────────────────
@@ -175,16 +177,16 @@ def score_application(input_data: dict) -> dict:
             eligibility=eligibility,
         )
 
-    # ── 9. Audit Persistence ──────────────────────────────────────────
-    audit = AuditRecord(
-        application_id=app_id,
-        timestamp=ts,
-        input_data=to_serialisable(app),
-        computed_features=to_serialisable(features),
-        hard_decline_result=to_serialisable(decline_result),
-        output=to_serialisable(output),
-    )
-    save_audit_record(audit.dict())
+    # ── 9. In-memory audit (replaces MongoDB) ───────────────────────
+    _audit_log.append({
+        "application_id": app_id,
+        "timestamp":      ts,
+        "input":          to_serialisable(app),
+        "features":       to_serialisable(features),
+        "output":         to_serialisable(output),
+    })
+    if len(_audit_log) > 50:
+        _audit_log.pop(0)
 
     logger.info(
         "Result → score=%s band=%s decision=%s eligible=₹%.0f",

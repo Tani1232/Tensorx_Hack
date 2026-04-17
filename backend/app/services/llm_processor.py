@@ -33,9 +33,18 @@ Remember: You must ALWAYS return pure JSON.
 
 class LLMProcessor:
     def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+        try:
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY is empty")
+            self.client = genai.Client(api_key=api_key)
+            print("[LLMProcessor] Gemini client initialised successfully.")
+        except Exception as e:
+            print(f"[LLMProcessor] WARNING: Could not initialise Gemini client — {e}. LLM extraction will be disabled.")
+            self.client = None
 
     async def extract_structured_data(self, transcript: str) -> dict:
+        if self.client is None:
+            return {}
         try:
             response = await self.client.aio.models.generate_content(
                 model='gemini-2.5-flash',

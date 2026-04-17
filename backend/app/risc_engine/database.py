@@ -21,11 +21,18 @@ from .utils import logger
 
 _client: Optional[MongoClient] = None
 _collection = None
+_db_unavailable: bool = False  # cached failure flag — avoids re-attempting a dead connection
 
 
 def _get_collection():
-    """Lazily initialise and return the MongoDB collection handle."""
-    global _client, _collection
+    """Lazily initialise and return the MongoDB collection handle.
+    Once a connection failure is detected, we cache that result and
+    never block again — eliminating repeated 3-second hangs.
+    """
+    global _client, _collection, _db_unavailable
+
+    if _db_unavailable:
+        return None  # fast-path: already known to be unavailable
 
     if _collection is not None:
         return _collection
@@ -33,7 +40,8 @@ def _get_collection():
     try:
         _client = MongoClient(
             MONGO_URI,
-            serverSelectionTimeoutMS=3000,   # 3-second connection timeout
+            serverSelectionTimeoutMS=500,   # 500ms is plenty for a local instance
+            connectTimeoutMS=500,
         )
         # Ping to verify connection is alive
         _client.admin.command("ping")
@@ -50,6 +58,7 @@ def _get_collection():
         logger.warning(
             "MongoDB unavailable (%s). Audit records will NOT be persisted.", exc
         )
+        _db_unavailable = True  # never retry — stop blocking the event loop
         _collection = None
 
     return _collection
