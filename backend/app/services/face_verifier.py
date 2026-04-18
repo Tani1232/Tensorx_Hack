@@ -14,17 +14,21 @@ class FaceVerifier:
             print("❌ Face++ API keys missing. Cannot verify age.")
             return -1
 
-        # Strip data URI header if present
-        if "," in base64_image:
-            base64_image = base64_image.split(",")[1]
-
-        image_data = base64.b64decode(base64_image)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-            tmp_file.write(image_data)
-            tmp_path = tmp_file.name
+        tmp_path = None
 
         try:
+            if not isinstance(base64_image, str) or not base64_image:
+                return -1
+
+            # Strip data URI header if present
+            if "," in base64_image:
+                base64_image = base64_image.split(",", 1)[1]
+
+            image_data = base64.b64decode(base64_image, validate=True)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+                tmp_file.write(image_data)
+                tmp_path = tmp_file.name
+
             data = {
                 "api_key": self.api_key,
                 "api_secret": self.api_secret,
@@ -33,7 +37,7 @@ class FaceVerifier:
 
             with open(tmp_path, "rb") as f:
                 files = {"image_file": f}
-                response = requests.post(self.url, data=data, files=files)
+                response = requests.post(self.url, data=data, files=files, timeout=(5, 15))
 
             result = response.json()
             if "faces" in result and len(result["faces"]) > 0:
@@ -48,5 +52,5 @@ class FaceVerifier:
             print(f"Face verification Error: {e}")
             return -1
         finally:
-            if os.path.exists(tmp_path):
+            if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)

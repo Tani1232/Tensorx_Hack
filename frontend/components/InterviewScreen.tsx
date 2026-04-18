@@ -24,12 +24,12 @@ import {
   X,
   Menu,
 } from 'lucide-react';
-import { INTERVIEW_QUESTIONS } from '../lib/questions';
+import { INTERVIEW_QUESTIONS, type Question } from '../lib/questions';
 import { ScoreRing } from './ui/score-ring';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type RiskResult = {
-  decision: 'APPROVE' | 'DECLINE' | 'REVIEW';
+  decision: 'APPROVE' | 'DECLINE' | 'REVIEW' | 'REDUCE';
   risk_score: number;
   risk_band: string;
   top_factors: string[];
@@ -38,12 +38,41 @@ type RiskResult = {
 };
 
 type ExtractedData = {
+  full_name?: string;
+  consent_video_recording?: boolean;
+  consent_bureau_pull?: boolean;
   monthly_income?: number;
   employment_tenure_months?: number;
   employment_type?: string;
   amount?: number;
+  tenure_months?: number;
+  declared_emi_capacity?: number;
   existing_emis?: number;
+  credit_card_outstanding?: number;
   age?: number;
+  cibil_score?: number;
+  credit_utilization?: number;
+  credit_history_months?: number;
+  dpd_90_plus_count?: number;
+};
+
+type SessionSummary = {
+  full_name: string;
+  consent_video_recording: boolean;
+  consent_bureau_pull: boolean;
+  age: number;
+  employment_type: string;
+  monthly_income: number;
+  employment_tenure_months: number;
+  loan_amount: number;
+  loan_tenure_months: number;
+  declared_emi_capacity: number;
+  existing_emis: number;
+  credit_card_outstanding: number;
+  cibil_score?: number;
+  credit_utilization?: number;
+  credit_history_months?: number;
+  dpd_90_plus_count?: number;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -53,12 +82,19 @@ const DECISION_CONFIG = {
   APPROVE: { label: 'Approved',     color: '#10B981', bg: 'rgba(16,185,129,0.08)',  border: 'rgba(16,185,129,0.20)' },
   DECLINE: { label: 'Declined',     color: '#EF4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.20)'  },
   REVIEW:  { label: 'Under Review', color: '#F59E0B', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.20)' },
+  REDUCE:  { label: 'Reduced Offer', color: '#3B82F6', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.20)' },
 };
 
 function formatCurrency(v: number) {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency', currency: 'INR', maximumFractionDigits: 0,
   }).format(v);
+}
+
+function boolText(value?: boolean) {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return '—';
 }
 
 // ─── SectionNav (left sidebar, desktop only) ──────────────────────────────────
@@ -133,185 +169,6 @@ function SectionNav({
   );
 }
 
-// ─── AnalyticsContent (shared between sidebar and mobile sheet) ────────────────
-function AnalyticsContent({
-  extractedData, riskResult, isConnected,
-}: {
-  extractedData: ExtractedData; riskResult: RiskResult | null; isConnected: boolean;
-}) {
-  const fields = [
-    { label: 'Monthly Income', value: extractedData.monthly_income           ? formatCurrency(extractedData.monthly_income)         : null, icon: Banknote  },
-    { label: 'Employment',     value: extractedData.employment_type                                                                  ?? null, icon: Briefcase  },
-    { label: 'Tenure',         value: extractedData.employment_tenure_months  ? `${extractedData.employment_tenure_months} months`   : null, icon: Clock      },
-    { label: 'Loan Amount',    value: extractedData.amount                    ? formatCurrency(extractedData.amount)                 : null, icon: TrendingUp },
-    { label: 'Existing EMI',   value: extractedData.existing_emis             ? formatCurrency(extractedData.existing_emis)          : null, icon: CreditCard },
-    { label: 'Age',            value: extractedData.age                       ? `${extractedData.age} yrs`                          : null, icon: User       },
-  ];
-
-  const decisionCfg = riskResult ? (DECISION_CONFIG[riskResult.decision] ?? DECISION_CONFIG.REVIEW) : null;
-  const activeFlags = riskResult?.flags?.filter(f => f !== 'NONE') ?? [];
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Live header */}
-      <div className="flex items-center gap-2">
-        <Activity size={13} color="#64748B" />
-        <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#64748B' }}>Live Extraction</span>
-        {isConnected && (
-          <div className="ml-auto flex items-center gap-1.5">
-            <div className="animate-pulse-dot status-dot" style={{ background: '#3B6FD4' }} />
-            <span className="text-xs" style={{ color: '#3B6FD4' }}>Live</span>
-          </div>
-        )}
-      </div>
-
-      {/* Fields grid */}
-      <div className="rounded-xl p-4" style={{ background: '#0F1218', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="grid grid-cols-2 gap-4">
-          {fields.map(({ label, value, icon: Icon }) => (
-            <div key={label}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Icon size={11} color="#64748B" />
-                <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#64748B' }}>{label}</p>
-              </div>
-              <AnimatePresence mode="wait">
-                <motion.p key={value ?? 'empty'} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}
-                  className="font-mono text-sm leading-none" style={{ color: value ? '#F1F5F9' : '#374151' }}>
-                  {value ?? '—'}
-                </motion.p>
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Risk result */}
-      <AnimatePresence>
-        {riskResult && decisionCfg && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.16,1,0.3,1] }}
-            className="rounded-xl overflow-hidden" style={{ border: `1px solid ${decisionCfg.border}`, background: decisionCfg.bg }}>
-            <div className="flex items-center justify-between px-5 pt-5 pb-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#64748B' }}>Risk Decision</p>
-                <h3 className="text-2xl font-bold tracking-tight" style={{ color: decisionCfg.color }}>{decisionCfg.label}</h3>
-                <p className="text-xs mt-1 font-mono" style={{ color: '#64748B' }}>Band: {riskResult.risk_band}</p>
-              </div>
-              <ScoreRing score={riskResult.risk_score} decision={riskResult.decision} size={84} strokeWidth={6} />
-            </div>
-
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <div className="px-5 pt-4 pb-5 space-y-4">
-              {riskResult.top_factors?.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: '#64748B' }}>Key Factors</p>
-                  <div className="flex flex-col gap-1.5">
-                    {riskResult.top_factors.map(f => (
-                      <div key={f} className="flex items-center gap-2">
-                        <ChevronRight size={10} color="#3B6FD4" />
-                        <span className="text-xs leading-snug" style={{ color: '#94A3B8' }}>{f}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {activeFlags.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: '#EF4444', opacity: 0.7 }}>Risk Flags</p>
-                  <div className="flex flex-col gap-1.5">
-                    {activeFlags.map(flag => (
-                      <div key={flag} className="flex items-center gap-2">
-                        <AlertCircle size={11} color="#EF4444" />
-                        <span className="text-xs leading-snug" style={{ color: '#FDA5A5' }}>{flag}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {riskResult.llm_explanation && (
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#64748B' }}>AI Reasoning</p>
-                  <p className="text-xs leading-relaxed" style={{ color: '#94A3B8' }}>{riskResult.llm_explanation}</p>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {!riskResult && (
-        <div className="rounded-xl flex flex-col items-center justify-center py-8 gap-3"
-          style={{ border: '1px solid rgba(255,255,255,0.06)', background: '#0F1218' }}>
-          <div className="rounded-full flex items-center justify-center"
-            style={{ width: 40, height: 40, background: 'rgba(59,111,212,0.10)', border: '1px solid rgba(59,111,212,0.15)' }}>
-            <TrendingUp size={18} color="#3B6FD4" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-medium" style={{ color: '#64748B' }}>Awaiting assessment</p>
-            <p className="text-xs mt-0.5" style={{ color: '#374151' }}>Risk score appears as you answer</p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Desktop right sidebar ────────────────────────────────────────────────────
-function AnalyticsPanel(props: { extractedData: ExtractedData; riskResult: RiskResult | null; isConnected: boolean }) {
-  return (
-    <aside className="hidden xl:flex flex-col border-l overflow-y-auto"
-      style={{ width: 312, minWidth: 312, background: '#0A0D12', borderColor: 'rgba(255,255,255,0.06)', padding: '24px 16px', gap: 20 }}>
-      <AnalyticsContent {...props} />
-    </aside>
-  );
-}
-
-// ─── Mobile bottom sheet ──────────────────────────────────────────────────────
-function MobileAnalyticsSheet({
-  open, onClose, ...props
-}: { open: boolean; onClose: () => void; extractedData: ExtractedData; riskResult: RiskResult | null; isConnected: boolean }) {
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            key="backdrop"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={onClose}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 40 }}
-          />
-          {/* Sheet */}
-          <motion.div
-            key="sheet"
-            initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.9 }}
-            style={{
-              position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
-              background: '#0F1218', borderTop: '1px solid rgba(255,255,255,0.10)',
-              borderRadius: '20px 20px 0 0',
-              maxHeight: '80dvh', overflowY: 'auto',
-              padding: '0 16px 32px',
-            }}
-          >
-            {/* Handle */}
-            <div className="flex items-center justify-center pt-3 pb-4">
-              <div style={{ width: 36, height: 4, borderRadius: 99, background: 'rgba(255,255,255,0.12)' }} />
-            </div>
-            {/* Close */}
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-semibold" style={{ color: '#F1F5F9' }}>Live Analytics</span>
-              <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-                <X size={18} color="#64748B" />
-              </button>
-            </div>
-            <AnalyticsContent {...props} />
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
-  );
-}
-
 // ─── Mobile section nav sheet ─────────────────────────────────────────────────
 function MobileSectionSheet({
   open, onClose, sections, currentSection, activeQIndex, totalQ,
@@ -341,7 +198,7 @@ function MobileSectionSheet({
                 <ShieldCheck size={16} color="#3B6FD4" />
                 <span className="text-sm font-semibold" style={{ color: '#F1F5F9' }}>LoanAI</span>
               </div>
-              <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+              <button aria-label="Close section navigation" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
                 <X size={18} color="#64748B" />
               </button>
             </div>
@@ -363,7 +220,7 @@ function MobileSectionSheet({
                 const isPast = idx < currentSectionIdx;
                 const isActive = idx === currentSectionIdx;
                 return (
-                  <div key={sec} onClick={onClose} className="flex items-start gap-3 rounded-lg px-3 py-2.5"
+                  <button type="button" aria-label={`Section ${sec}`} key={sec} onClick={onClose} className="flex w-full text-left items-start gap-3 rounded-lg px-3 py-2.5"
                     style={{ background: isActive ? 'rgba(59,111,212,0.10)' : 'transparent', opacity: isPast || isActive ? 1 : 0.35 }}>
                     <div className="mt-0.5 flex-shrink-0">
                       {isPast  ? <CheckCircle2 size={16} color="#10B981" strokeWidth={2} /> :
@@ -376,7 +233,7 @@ function MobileSectionSheet({
                       {isActive && <p className="text-xs mt-0.5" style={{ color: '#3B6FD4' }}>In progress</p>}
                       {isPast  && <p className="text-xs mt-0.5" style={{ color: '#10B981' }}>Complete</p>}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </nav>
@@ -387,23 +244,167 @@ function MobileSectionSheet({
   );
 }
 
+// ─── InterviewResults (displayed after completion) ──────────────────────────
+function InterviewResults({
+   questions,
+   answers,
+   riskResult,
+   sessionSummary,
+   onReset,
+ }: {
+   questions: Question[];
+   answers: string[];
+   riskResult: RiskResult | null;
+   sessionSummary: SessionSummary | null;
+   onReset: () => void;
+ }) {
+  const decisionCfg = riskResult ? (DECISION_CONFIG[riskResult.decision] ?? DECISION_CONFIG.REVIEW) : null;
+
+  if (!riskResult || !decisionCfg) {
+    return (
+      <div style={{
+        minHeight: '100dvh',
+        background: '#080A0E',
+        color: '#F1F5F9',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 24,
+        padding: 40
+      }}>
+        <div className="animate-pulse" style={{ width: 80, height: 80, borderRadius: 20, background: 'rgba(59,111,212,0.1)', border: '1px solid rgba(59,111,212,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Activity size={40} color="#3B6FD4" />
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Analyzing Results...</h2>
+          <p style={{ color: '#64748B' }}>Our AI is calculating your risk profile and generating the final assessment.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      minHeight: '100dvh',
+      background: '#080A0E',
+      color: '#F1F5F9',
+      padding: '40px 24px',
+      overflowY: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center'
+    }}>
+      <div style={{ maxWidth: 800, width: '100%' }}>
+        <header style={{ marginBottom: 40, textAlign: 'center' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(59,111,212,0.15)', border: '1px solid rgba(59,111,212,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ShieldCheck size={20} color="#3B6FD4" />
+            </div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>Assessment Summary</h1>
+          </div>
+          <p style={{ color: '#64748B', fontSize: 16 }}>Your interview has been completed and analyzed by our AI system.</p>
+        </header>
+
+        <section style={{ marginBottom: 40 }}>
+          <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Activity size={18} color="#3B6FD4" />
+            Interview Transcripts
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {questions.map((q, idx) => (
+              <div key={q.id} style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 16,
+                padding: 20,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#3B6FD4', background: 'rgba(59,111,212,0.1)', padding: '2px 8px', borderRadius: 99 }}>Q{idx + 1}</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: '#64748B' }}>{q.section}</span>
+                </div>
+                <p style={{ fontSize: 15, fontWeight: 500, color: '#F1F5F9', marginBottom: 12, lineHeight: 1.5 }}>{q.text}</p>
+                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 16, border: '1px solid rgba(255,255,255,0.04)' }}>
+                  <p style={{ fontSize: 14, color: '#94A3B8', fontStyle: 'italic', margin: 0, lineHeight: 1.6 }}>
+                    {answers[idx] || 'No response captured.'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div style={{
+          background: 'rgba(59,111,212,0.05)',
+          border: '1px solid rgba(59,111,212,0.1)',
+          borderRadius: 16,
+          padding: 20,
+          textAlign: 'center',
+          marginBottom: 40
+        }}>
+          <p style={{ fontSize: 14, color: '#94A3B8' }}>
+            Your interview data has been securely submitted for review. 
+            A bank representative will contact you shortly regarding your application status.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 0 }}>
+          <button
+            onClick={onReset}
+            style={{
+              padding: '12px 32px',
+              borderRadius: 999,
+              background: '#3B6FD4',
+              color: 'white',
+              fontSize: 16,
+              fontWeight: 600,
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 10px 20px rgba(59,111,212,0.2)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+          >
+            Start New Session
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function InterviewScreen() {
   const videoRef         = useRef<HTMLVideoElement>(null);
   const wsRef            = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const faceCaptureTimeoutRef = useRef<number | null>(null);
+
+  const audioContextRef   = useRef<AudioContext | null>(null);
+  const processorRef      = useRef<ScriptProcessorNode | null>(null);
+  const streamRef         = useRef<MediaStream | null>(null);
 
   const [isConnected, setIsConnected]         = useState(false);
+  const [isStarting, setIsStarting]           = useState(false);
   const [isMicOn, setIsMicOn]                 = useState(true);
   const [isVideoOn, setIsVideoOn]             = useState(true);
   const [transcript, setTranscript]           = useState('');
   const [activeQIndex, setActiveQIndex]       = useState(0);
+  const activeQIndexRef                       = useRef(0);
+  const [answers, setAnswers]                 = useState<string[]>(new Array(INTERVIEW_QUESTIONS.length).fill(''));
+  const [isFinished, setIsFinished]           = useState(false);
+
+  // Update ref whenever state changes
+  useEffect(() => {
+    activeQIndexRef.current = activeQIndex;
+  }, [activeQIndex]);
   const [extractedData, setExtractedData]     = useState<ExtractedData>({});
   const [riskResult, setRiskResult]           = useState<RiskResult | null>(null);
   const [systemStatus, setSystemStatus]       = useState('Ready to begin');
   const [sessionId, setSessionId]             = useState('');
-  const [showAnalytics, setShowAnalytics]     = useState(false);
   const [showSectionNav, setShowSectionNav]   = useState(false);
+  const [sessionSummary, setSessionSummary]   = useState<SessionSummary | null>(null);
 
   useEffect(() => {
     const d = new Date();
@@ -411,79 +412,208 @@ export default function InterviewScreen() {
     setSessionId(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} · ${String(Math.floor(Math.random()*90000+10000))}`);
   }, []);
 
-  const currentQ    = INTERVIEW_QUESTIONS[activeQIndex];
-  const progressPct = ((activeQIndex + 1) / INTERVIEW_QUESTIONS.length) * 100;
+  const hasQuestions = INTERVIEW_QUESTIONS.length > 0;
+  const currentQ = hasQuestions ? INTERVIEW_QUESTIONS[Math.min(activeQIndex, INTERVIEW_QUESTIONS.length - 1)] : null;
+  const progressPct = hasQuestions ? ((activeQIndex + 1) / INTERVIEW_QUESTIONS.length) * 100 : 0;
 
   useEffect(() => {
+    if (!currentQ) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'set_question', question: currentQ.text }));
+      try {
+        wsRef.current.send(JSON.stringify({ type: 'set_question', question: currentQ.text }));
+      } catch {
+        setSystemStatus('Connection interrupted');
+      }
     }
-  }, [activeQIndex, currentQ.text]);
+  }, [activeQIndex, currentQ]);
 
   const startSession = useCallback(async () => {
+    if (isStarting || isConnected || !currentQ) return;
+    setIsStarting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
 
       setSystemStatus('Connecting...');
-      const ws = new WebSocket('ws://localhost:8000/ws/audio');
+      const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws/audio';
+      const token = process.env.NEXT_PUBLIC_WS_AUTH_TOKEN;
+      const wsUrl = token ? `${wsBase}${wsBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : wsBase;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setIsConnected(true);
+        setIsStarting(false);
         setSystemStatus('AI Model loading...');
+        setSessionSummary(null);
 
-        const audioStream = new MediaStream(stream.getAudioTracks());
-        let recorder: MediaRecorder;
-        try { recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' }); }
-        catch { recorder = new MediaRecorder(audioStream); }
-        mediaRecorderRef.current = recorder;
+        // PCM Audio Capture (16kHz S16LE)
+        const audioContext = new AudioContext({ sampleRate: 16000 });
+        audioContextRef.current = audioContext;
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
-        ws.send(JSON.stringify({ type: 'set_question', question: INTERVIEW_QUESTIONS[0].text }));
+        processor.onaudioprocess = (e) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            const inputData = e.inputBuffer.getChannelData(0);
+            // Convert Float32 to Int16 PCM
+            const pcmData = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+            }
+            ws.send(pcmData.buffer);
+          }
+        };
 
-        setTimeout(() => {
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        ws.send(JSON.stringify({ type: 'set_question', question: currentQ.text }));
+
+        faceCaptureTimeoutRef.current = window.setTimeout(() => {
           if (videoRef.current && videoRef.current.videoWidth > 0) {
             const canvas = document.createElement('canvas');
             canvas.width  = videoRef.current.videoWidth;
             canvas.height = videoRef.current.videoHeight;
             canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-            ws.send(JSON.stringify({ type: 'face_image', image: canvas.toDataURL('image/jpeg', 0.8) }));
+            try {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'face_image', image: canvas.toDataURL('image/jpeg', 0.8) }));
+              }
+            } catch {
+              setSystemStatus('Connection interrupted');
+            }
           }
         }, 2000);
-
-        recorder.ondataavailable = e => {
-          if (e.data?.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
-        };
-        recorder.start(1000);
       };
 
       ws.onmessage = event => {
-        const payload = JSON.parse(event.data);
-        if      (payload.type === 'status')        setSystemStatus(payload.message);
-        else if (payload.type === 'transcript')    setTranscript(payload.text);
-        else if (payload.type === 'risk_result') {
-          setExtractedData(prev => ({ ...prev, ...payload.extracted_fields }));
-          setRiskResult(payload.data);
+        if (typeof event.data !== 'string') return;
+        let payload: Record<string, any>;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          setSystemStatus('Received malformed server response');
+          return;
         }
-        else if (payload.type === 'advance_question')
-          setActiveQIndex(prev => Math.min(INTERVIEW_QUESTIONS.length - 1, prev + 1));
+        if (payload.type === 'status' && typeof payload.message === 'string') {
+          setSystemStatus(payload.message);
+        }
+        else if (payload.type === 'transcript_partial' && typeof payload.text === 'string') {
+          setTranscript(payload.text);
+          // Only update answers if there's actually text to avoid clearing it during the "reset" signal
+          // unless we want it to clear. In this case, if the backend sends empty, we should clear it.
+          setAnswers(prev => {
+            const newAnswers = [...prev];
+            newAnswers[activeQIndexRef.current] = payload.text;
+            return newAnswers;
+          });
+        }
+        else if (payload.type === 'transcript' && typeof payload.text === 'string') {
+          setTranscript(payload.text);
+          setAnswers(prev => {
+            const newAnswers = [...prev];
+            newAnswers[activeQIndexRef.current] = payload.text;
+            return newAnswers;
+          });
+        }
+        else if (payload.type === 'risk_result') {
+          if (payload.extracted_fields && typeof payload.extracted_fields === 'object') {
+            setExtractedData(prev => ({ ...prev, ...payload.extracted_fields }));
+          }
+          if (payload.summary && typeof payload.summary === 'object') {
+            setSessionSummary(payload.summary as SessionSummary);
+          }
+          if (payload.data && typeof payload.data === 'object') {
+            setRiskResult(payload.data as RiskResult);
+          }
+        }
+        else if (payload.type === 'advance_question') {
+          if (activeQIndexRef.current === INTERVIEW_QUESTIONS.length - 1) {
+            setIsFinished(true);
+            endSession();
+          } else {
+            setActiveQIndex(prev => prev + 1);
+            setTranscript('');
+          }
+        }
       };
 
-      ws.onclose = () => { setIsConnected(false); setSystemStatus('Session ended'); };
+      ws.onerror = () => {
+        setSystemStatus('Connection error');
+      };
+
+      ws.onclose = () => {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+          try {
+            recorder.stop();
+          } catch {
+            // Ignore recorder shutdown errors on close.
+          }
+        }
+        if (videoRef.current?.srcObject) {
+          (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+          videoRef.current.srcObject = null;
+        }
+        setIsConnected(false);
+        setIsStarting(false);
+        setSystemStatus('Session ended');
+      };
     } catch (err) {
       console.error(err);
       setSystemStatus('Camera access denied');
+      setIsStarting(false);
     }
-  }, []);
+  }, [currentQ, isConnected, isStarting]);
 
   const endSession = useCallback(() => {
-    mediaRecorderRef.current?.stop();
+    if (faceCaptureTimeoutRef.current) {
+      window.clearTimeout(faceCaptureTimeoutRef.current);
+      faceCaptureTimeoutRef.current = null;
+    }
+    
+    // Stop PCM capture
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+
     wsRef.current?.close();
     if (videoRef.current?.srcObject)
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+    wsRef.current = null;
     setIsConnected(false);
+    setIsStarting(false);
     setSystemStatus('Session ended');
   }, []);
+
+  useEffect(() => {
+    return () => {
+      endSession();
+    };
+  }, [endSession]);
+
+  const resetSession = useCallback(() => {
+    endSession();
+    setActiveQIndex(0);
+    setAnswers(new Array(INTERVIEW_QUESTIONS.length).fill(''));
+    setTranscript('');
+    setExtractedData({});
+    setRiskResult(null);
+    setSessionSummary(null);
+    setIsFinished(false);
+  }, [endSession]);
 
   const toggleMic = useCallback(() => {
     (videoRef.current?.srcObject as MediaStream | null)?.getAudioTracks().forEach(t => { t.enabled = !t.enabled; });
@@ -494,6 +624,26 @@ export default function InterviewScreen() {
     (videoRef.current?.srcObject as MediaStream | null)?.getVideoTracks().forEach(t => { t.enabled = !t.enabled; });
     setIsVideoOn(p => !p);
   }, []);
+
+  if (isFinished) {
+    return (
+      <InterviewResults
+        questions={INTERVIEW_QUESTIONS}
+        answers={answers}
+        riskResult={riskResult}
+        sessionSummary={sessionSummary}
+        onReset={resetSession}
+      />
+    );
+  }
+
+  if (!hasQuestions || !currentQ) {
+    return (
+      <div style={{ height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#080A0E', color: '#F1F5F9' }}>
+        No interview questions configured. Add entries in frontend/lib/questions.ts.
+      </div>
+    );
+  }
 
   // Helper: icon button style
   const iconBtn = (danger = false, active = true) => ({
@@ -512,7 +662,7 @@ export default function InterviewScreen() {
         {/* Left: menu (mobile) + brand */}
         <div className="flex items-center gap-3">
           {isConnected && (
-            <button className="lg:hidden flex items-center justify-center rounded-lg" onClick={() => setShowSectionNav(true)}
+            <button aria-label="Open section navigation" className="lg:hidden flex items-center justify-center rounded-lg" onClick={() => setShowSectionNav(true)}
               style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
               <Menu size={16} color="#94A3B8" />
             </button>
@@ -530,17 +680,8 @@ export default function InterviewScreen() {
           <span className="text-xs font-medium" style={{ color: isConnected ? '#94A3B8' : '#64748B' }}>{systemStatus}</span>
         </div>
 
-        {/* Right: analytics toggle (mobile) + session ID */}
+        {/* Right: session ID (desktop only) */}
         <div className="flex items-center gap-2">
-          {isConnected && (
-            <button className="xl:hidden flex items-center gap-1.5 rounded-lg px-3" onClick={() => setShowAnalytics(true)}
-              style={{ height: 36, background: 'rgba(59,111,212,0.12)', border: '1px solid rgba(59,111,212,0.25)', cursor: 'pointer' }}>
-              <BarChart2 size={14} color="#3B6FD4" />
-              <span className="text-xs font-medium" style={{ color: '#93C5FD' }}>
-                {riskResult ? riskResult.risk_score : 'Score'}
-              </span>
-            </button>
-          )}
           <span className="hidden sm:block text-xs font-mono" style={{ color: '#374151' }}>
             {sessionId}
           </span>
@@ -572,13 +713,13 @@ export default function InterviewScreen() {
             {/* Pre-start CTA */}
             {!isConnected && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20, background: 'linear-gradient(135deg, #080A0E 0%, #0F1218 100%)', padding: 24 }}>
-                <button onClick={startSession} style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(59,111,212,0.12)', border: '1px solid rgba(59,111,212,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.25s ease' }}
+                <button aria-label="Start interview session" disabled={isStarting} onClick={startSession} style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(59,111,212,0.12)', border: '1px solid rgba(59,111,212,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isStarting ? 'not-allowed' : 'pointer', transition: 'all 0.25s ease', opacity: isStarting ? 0.7 : 1 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(59,111,212,0.22)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(59,111,212,0.12)'; }}>
                   <Video size={28} color="#3B6FD4" />
                 </button>
                 <div style={{ textAlign: 'center' }}>
-                  <p style={{ fontSize: 16, fontWeight: 500, color: '#F1F5F9', marginBottom: 6 }}>Start your loan assessment</p>
+                  <p style={{ fontSize: 16, fontWeight: 500, color: '#F1F5F9', marginBottom: 6 }}>{isStarting ? 'Connecting session...' : 'Start your loan assessment'}</p>
                   <p style={{ fontSize: 13, color: '#64748B' }}>Camera and microphone required · Encrypted</p>
                 </div>
               </div>
@@ -633,19 +774,55 @@ export default function InterviewScreen() {
           {/* Controls */}
           {isConnected && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
-              <button onClick={toggleMic} title="Toggle mic" style={iconBtn(false, isMicOn)}>
+              <button aria-label="Toggle microphone" aria-pressed={isMicOn} onClick={toggleMic} title="Toggle mic" style={iconBtn(false, isMicOn)}>
                 {isMicOn ? <Mic size={16} color="#94A3B8" /> : <MicOff size={16} color="#EF4444" />}
               </button>
-              <button onClick={toggleVideo} title="Toggle camera" style={iconBtn(false, isVideoOn)}>
+              <button aria-label="Toggle camera" aria-pressed={isVideoOn} onClick={toggleVideo} title="Toggle camera" style={iconBtn(false, isVideoOn)}>
                 {isVideoOn ? <Video size={16} color="#94A3B8" /> : <VideoOff size={16} color="#EF4444" />}
               </button>
               <button
-                onClick={() => setActiveQIndex(p => Math.min(INTERVIEW_QUESTIONS.length - 1, p + 1))}
-                style={{ height: 44, padding: '0 16px', borderRadius: 999, border: '1px solid rgba(59,111,212,0.30)', background: 'rgba(59,111,212,0.10)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#93C5FD', fontSize: 13, fontWeight: 500, transition: 'all 0.2s ease' }}>
-                Next
-                <ChevronRight size={13} color="#93C5FD" />
+                disabled={!transcript.trim()}
+                onClick={() => {
+                  // Capture current transcript as the final answer for this question
+                  const currentText = transcript.trim();
+                  setAnswers(prev => {
+                    const newAnswers = [...prev];
+                    newAnswers[activeQIndex] = currentText;
+                    return newAnswers;
+                  });
+
+                  if (activeQIndex === INTERVIEW_QUESTIONS.length - 1) {
+                    setIsFinished(true);
+                    endSession();
+                  } else {
+                    // Send signal to backend to clear buffer for new question
+                    if (wsRef.current?.readyState === WebSocket.OPEN) {
+                      wsRef.current.send(JSON.stringify({ type: 'clear_buffer' }));
+                    }
+                    setActiveQIndex(p => p + 1);
+                    setTranscript('');
+                  }
+                }}
+                style={{
+                  height: 44,
+                  padding: '0 16px',
+                  borderRadius: 999,
+                  border: transcript.trim() ? '1px solid rgba(59,111,212,0.30)' : '1px solid rgba(255,255,255,0.05)',
+                  background: transcript.trim() ? 'rgba(59,111,212,0.10)' : 'rgba(255,255,255,0.02)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: transcript.trim() ? 'pointer' : 'not-allowed',
+                  color: transcript.trim() ? '#93C5FD' : '#374151',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                  opacity: transcript.trim() ? 1 : 0.5,
+                }}>
+                {activeQIndex === INTERVIEW_QUESTIONS.length - 1 ? 'Finish' : 'Next'}
+                <ChevronRight size={13} color={transcript.trim() ? '#93C5FD' : '#374151'} />
               </button>
-              <button onClick={endSession} title="End session" style={iconBtn(true, false)}>
+              <button aria-label="End session" onClick={endSession} title="End session" style={iconBtn(true, false)}>
                 <PhoneOff size={16} color="#EF4444" />
               </button>
             </div>
@@ -658,19 +835,9 @@ export default function InterviewScreen() {
             </div>
           )}
         </main>
-
-        {/* Desktop right sidebar */}
-        <AnalyticsPanel extractedData={extractedData} riskResult={riskResult} isConnected={isConnected} />
       </div>
 
       {/* ── Mobile sheets ──────────────────────────────────────────────── */}
-      <MobileAnalyticsSheet
-        open={showAnalytics}
-        onClose={() => setShowAnalytics(false)}
-        extractedData={extractedData}
-        riskResult={riskResult}
-        isConnected={isConnected}
-      />
       <MobileSectionSheet
         open={showSectionNav}
         onClose={() => setShowSectionNav(false)}

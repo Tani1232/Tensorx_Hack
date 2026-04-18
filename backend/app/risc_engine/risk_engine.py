@@ -90,22 +90,30 @@ def score_application(input_data: dict) -> dict:
     # ── 2. Feature Engineering (includes eligibility engine) ────────
     features = engineer_features(app)
 
+    # ── 2.5 Compute model score baseline (always, even for hard declines) ──
+    raw_score, factor_scores = _compute_weighted_score(features)
+
+    if app.collateral and app.collateral.collateral_type != CollateralType.NONE:
+        raw_score = raw_score * SECURED_LOAN_SCORE_BOOST
+        logger.info("Secured loan boost applied (×%.2f)", SECURED_LOAN_SCORE_BOOST)
+
+    risk_score = int(round(clamp(raw_score, 0.0, 1000.0)))
+    risk_band_only = _band_from_score(risk_score)
+    top_factors = _top_factors(factor_scores)
+
     # ── 3. Hard Decline Rules ────────────────────────────────────────
     decline_result = evaluate_hard_rules(app, features)
 
     if decline_result.is_declined:
-        output = _build_decline_output(features, decline_result, app)
+        output = _build_decline_output(
+            features=features,
+            decline_result=decline_result,
+            app=app,
+            risk_score=risk_score,
+            risk_band=risk_band_only,
+            top_factors=top_factors,
+        )
     else:
-        # ── 4. Weighted Score ─────────────────────────────────────────
-        raw_score, factor_scores = _compute_weighted_score(features)
-
-        # ── 4.5 Secured Loan Boost ────────────────────────────────────
-        if app.collateral and app.collateral.collateral_type != CollateralType.NONE:
-            raw_score = raw_score * SECURED_LOAN_SCORE_BOOST
-            logger.info("Secured loan boost applied (×%.2f)", SECURED_LOAN_SCORE_BOOST)
-
-        risk_score = int(round(clamp(raw_score, 0.0, 1000.0)))
-
         # ── 5. Risk Band + Decision (with eligibility) ────────────────
         risk_band, decision = _classify(risk_score, features)
 
@@ -146,8 +154,6 @@ def score_application(input_data: dict) -> dict:
         # ── 7. Reason Codes ───────────────────────────────────────────
         reason_codes = _generate_reason_codes(app, features)
         reason_codes.extend(soft_reasons)
-        top_factors  = _top_factors(factor_scores)
-
         # ── 8. Explanation ────────────────────────────────────────────
         explanation = generate_explanation(
             decision=decision.value,
@@ -177,14 +183,21 @@ def score_application(input_data: dict) -> dict:
             eligibility=eligibility,
         )
 
-    # ── 9. In-memory audit (replaces MongoDB) ───────────────────────
-    _audit_log.append({
+    # ── 9. Persistence (Save to MongoDB if available) ───────────────────────
+    audit_record = {
         "application_id": app_id,
         "timestamp":      ts,
         "input":          to_serialisable(app),
         "features":       to_serialisable(features),
         "output":         to_serialisable(output),
-    })
+    }
+    
+    # Try saving to DB (from database.py)
+    from .database import save_audit_record
+    save_audit_record(audit_record)
+
+    # Maintain in-memory log for backward compatibility
+    _audit_log.append(audit_record)
     if len(_audit_log) > 50:
         _audit_log.pop(0)
 
@@ -232,6 +245,17 @@ def _compute_weighted_score(
         total += contribution
 
     return clamp(total, 0.0, 1000.0), weighted
+
+
+def _band_from_score(score: int) -> RiskBand:
+    """Map numeric score to risk band without decision logic."""
+    if score >= RISK_BAND_LOW_MIN:
+        return RiskBand.LOW
+    if score >= RISK_BAND_MEDIUM_MIN:
+        return RiskBand.MEDIUM
+    if score >= RISK_BAND_HIGH_MIN:
+        return RiskBand.HIGH
+    return RiskBand.VERY_HIGH
 
 
 def _classify(score: int, features: ComputedFeatures) -> Tuple[RiskBand, Decision]:
@@ -417,11 +441,14 @@ def _build_decline_output(
     features: ComputedFeatures,
     decline_result: HardDeclineResult,
     app: LoanApplicationInput,
+    risk_score: int,
+    risk_band: RiskBand,
+    top_factors: List[str],
 ) -> RiskScoreOutput:
     """Build a RiskScoreOutput for hard-declined applications."""
     explanation = generate_explanation(
         decision="DECLINE",
-        risk_band="VERY_HIGH",
+        risk_band=risk_band.value,
         reason_codes=decline_result.triggered_rules,
         flags=[],
     )
@@ -436,13 +463,13 @@ def _build_decline_output(
     )
 
     return RiskScoreOutput(
-        risk_score=0,
-        risk_band=RiskBand.VERY_HIGH.value,
+        risk_score=risk_score,
+        risk_band=risk_band.value,
         decision=Decision.DECLINE.value,
         foir=round(features.foir, 4),
         flags=[NONE_FLAG],
         reason_codes=decline_result.triggered_rules,
-        top_factors=decline_result.triggered_rules[:3],
+        top_factors=top_factors,
         llm_explanation=explanation,
         eligibility=eligibility,
     )
